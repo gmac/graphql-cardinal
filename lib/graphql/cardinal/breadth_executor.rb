@@ -28,12 +28,10 @@ module GraphQL
       private
 
       def exec_scope(parent_type, selections, sources, responses, path:)
-        selections.each do |node|
-          case node
-          when GraphQL::Language::Nodes::Field
+        selections = aggregate_selections_by_name(parent_type, selections)
+        selections.each do |field_key, node|
             field = @query.get_field(parent_type, node.name)
             field_type = field.type.unwrap
-            field_key = node.alias || node.name
             path.push(field_key)
 
             resolved_sources = begin
@@ -77,18 +75,6 @@ module GraphQL
               exec_scope(field_type, node.selections, next_sources, next_responses, path: path)
             end
             path.pop
-
-          when GraphQL::Language::Nodes::InlineFragment
-            fragment_type = node.type ? @query.get_type(node.type.name) : parent_type
-            exec_scope(fragment_type, node.selections, sources, responses, path: path)
-
-          when GraphQL::Language::Nodes::FragmentSpread
-            fragment = @query.fragments[node.name]
-            fragment_type = @query.get_type(fragment.type.name)
-            exec_scope(fragment_type, node.selections, sources, responses, path: path)
-
-          else
-            raise DocumentError.new("selection node type")
           end
         end
       end
@@ -108,6 +94,29 @@ module GraphQL
             next_sources << src
             next_responses << {}
             next_responses.last
+          end
+        end
+      end
+
+      def aggregate_selections_by_name(parent_type, selections, map: {})
+        selections.each do |node|
+          case node
+          when GraphQL::Language::Nodes::Field
+            # next if skipped...
+            map[node.alias || node.name].add_node(node)
+          when GraphQL::Language::Nodes::InlineFragment
+            # next if skipped...
+            fragment_type = node.type ? @query.get_type(node.type.name) : parent_type
+            aggregate_selections_by_name(parent_type, node.selections, map: map)
+
+          when GraphQL::Language::Nodes::FragmentSpread
+            # next if skipped...? is this possible?
+            fragment = @query.fragments[node.name]
+            fragment_type = @query.get_type(fragment.type.name)
+            aggregate_selections_by_name(parent_type, node.selections, map: map)
+            
+          else
+            raise DocumentError.new("selection node type")
           end
         end
       end
