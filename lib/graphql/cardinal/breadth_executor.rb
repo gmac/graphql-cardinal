@@ -2,6 +2,39 @@
 
 module GraphQL
   module Cardinal
+    class AggregateFieldNode
+      def initialize
+        @node = nil
+        @nodes = nil
+      end
+      
+      def add_node(n)
+        if !@node
+          @node = n
+        elsif !@nodes
+          @nodes = [@node, n]
+        else
+          @nodes << n
+        end
+      end
+
+      def selections
+        if @nodes
+          @nodes.flat_map(&:selections)
+        else
+          @node.selections
+        end
+      end
+
+      def arguments(vars)
+        return EMPTY_OBJECT if @node.arguments.empty?
+
+        @node.arguments.each_with_object({})do |a, args|
+          args[a.name] = a.value
+        end
+      end
+    end
+    
     class BreadthExecutor
       include Scalars
 
@@ -12,6 +45,8 @@ module GraphQL
         @resolvers = resolvers
         @document = document
         @root_object = root_object
+        @variables = {}
+        @context = {}
         @data = {}
         @exec_count = 0
         @non_null_violation = false
@@ -35,7 +70,7 @@ module GraphQL
             path.push(field_key)
 
             resolved_sources = begin
-              @resolvers.dig(parent_type.graphql_name, node.name).call(sources)
+              @resolvers.dig(parent_type.graphql_name, node.name).call(sources, node.arguments(@variables), @context)
             rescue StandardError
               # oh shit...
             end
@@ -98,7 +133,7 @@ module GraphQL
         end
       end
 
-      def aggregate_selections_by_name(parent_type, selections, map: {})
+      def aggregate_selections_by_name(parent_type, selections, map: Hash.new { |h, k| h[k] = AggregateFieldNode.new })
         selections.each do |node|
           case node
           when GraphQL::Language::Nodes::Field
