@@ -14,14 +14,15 @@ module GraphQL
         @root_object = root_object
         @data = {}
         @exec_count = 0
+        @non_null_violation = false
       end
 
-      def perform(shaping: true)
+      def perform
         @query = GraphQL::Query.new(@schema, document: @document) # << for schema reference
         operation = @query.selected_operation
         parent_type = @query.root_type_for_operation(operation.operation_type)
         exec_scope(parent_type, operation.selections, [@root_object], [@data], path: [])
-        shaping ? Cardinal::Shaper.perform(@query, @data) : @data
+        @non_null_violation ? Cardinal::Shaper.perform(@query, @data) : @data
       end
 
       private
@@ -35,13 +36,22 @@ module GraphQL
             field_key = node.alias || node.name
             path.push(field_key)
 
-            resolved_sources = @resolvers.dig(parent_type.graphql_name, node.name).call(sources)
-            raise ExecutionError, "Incorrect results" if resolved_sources.length != sources.length
+            resolved_sources = begin
+              @resolvers.dig(parent_type.graphql_name, node.name).call(sources)
+            rescue StandardError
+              # oh shit...
+            end
+
             @exec_count += 1
+            raise ExecutionError, "Incorrect results" if resolved_sources.length != sources.length
 
             if field_type.kind.leaf?
               resolved_sources.each_with_index do |val, i|
-                responses[i][field_key] = if !val.nil? && field_type.kind.scalar?
+                responses[i][field_key] = if val.nil? || val.is_a?(StandardError)
+                  @non_null_violation = true if field.type.non_null?
+                  # format error if val (error)...
+                  nil
+                elsif field_type.kind.scalar?
                   coerce_scalar_value(field_type, val)
                 else
                   val
@@ -51,7 +61,11 @@ module GraphQL
               next_sources = []
               next_responses = []
               resolved_sources.each_with_index do |src, i|
-                responses[i][field_key] = if field.type.list?
+                responses[i][field_key] = if val.nil? || val.is_a?(StandardError)
+                  @non_null_violation = true if field.type.non_null?
+                  # format error if val (error)...
+                  nil
+                elsif field.type.list?
                   build_list_response(field.type, src, next_sources, next_responses)
                 else
                   next_sources << src
@@ -83,17 +97,19 @@ module GraphQL
         list_type = list_type.of_type while list_type.non_null?
         next_type = list_type.of_type
 
-        list_response = []
-        sources.each do |src|
-          if next_type.list?
-            list_response << build_list_response(next_type, src, next_sources, next_responses)
+        sources.map do |src|
+          if src.nil? || src.is_a?(StandardError)
+            @non_null_violation = true if next_type.non_null?
+            # format error if val (error)...
+            nil
+          elsif next_type.list?
+            build_list_response(next_type, src, next_sources, next_responses)
           else
             next_sources << src
             next_responses << {}
-            list_response << next_responses.last
+            next_responses.last
           end
         end
-        list_response
       end
     end
   end
