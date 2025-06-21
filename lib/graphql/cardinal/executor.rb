@@ -250,7 +250,7 @@ module GraphQL
             fragment = @query.fragments[node.name]
             fragment_type = @query.get_type(fragment.type.name)
             if @query.possible_types(fragment_type).include?(parent_type)
-              execution_fields_by_key(parent_type, node.selections, map: map)
+              execution_fields_by_key(parent_type, fragment.selections, map: map)
             end
 
           else

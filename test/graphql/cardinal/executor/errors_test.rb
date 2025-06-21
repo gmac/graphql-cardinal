@@ -17,7 +17,7 @@ class GraphQL::Cardinal::Executor::ErrorsTest < Minitest::Test
         "nodes" => [
           { "maybe" => "okay!" },
           { "maybe" => nil },
-          { "maybe" => GraphQL::Cardinal::ExecutionError.new },
+          { "maybe" => GraphQL::Cardinal::ExecutionError.new("Not okay!") },
         ],
       },
     }
@@ -33,7 +33,7 @@ class GraphQL::Cardinal::Executor::ErrorsTest < Minitest::Test
         },
       },
       "errors" => [{
-        "message" => "An unknown error occurred",
+        "message" => "Not okay!",
         "path" => ["products", "nodes", 2, "maybe"],
       }],
     }
