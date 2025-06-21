@@ -28,7 +28,6 @@ module GraphQL
         @context = context
         @data = {}
         @errors = []
-        @path = []
         @exec_queue = []
         @exec_count = 0
         @context[:query] = @query
@@ -99,18 +98,18 @@ module GraphQL
             end
 
             resolved_sources = if !field_resolver.authorized?(@context)
-              @errors << AuthorizationError.new(type_name: parent_type.graphql_name, field_name: field_name, path: @path.dup, base: true)
+              @errors << AuthorizationError.new(type_name: parent_type.graphql_name, field_name: field_name, path: exec_field.path, base: true)
               Array.new(parent_sources.length, @errors.last)
             elsif !Authorization.can_access_type?(value_type, @context)
-              @errors << AuthorizationError.new(type_name: value_type.graphql_name, path: @path.dup, base: true)
+              @errors << AuthorizationError.new(type_name: value_type.graphql_name, path: exec_field.path, base: true)
               Array.new(parent_sources.length, @errors.last)
             else
               begin
                 @tracers.each { _1.before_resolve_field(parent_type, field_name, parent_sources.length, @context) }
                 field_resolver.resolve(parent_sources, exec_field.arguments(@variables), @context, exec_scope)
               rescue StandardError => e
-                report_exception(error: e)
-                @errors << InternalError.new(path: @path.dup, base: true)
+                report_exception(error: e, path: exec_field.path)
+                @errors << InternalError.new(path: exec_field.path, base: true)
                 Array.new(parent_sources.length, @errors.last)
               ensure
                 @tracers.each { _1.after_resolve_field(parent_type, field_name, parent_sources.length, @context) }
@@ -188,7 +187,7 @@ module GraphQL
             next_sources_by_type.each do |impl_type, impl_type_sources|
               # check concrete type access only once per resolved type...
               unless Authorization.can_access_type?(impl_type, @context)
-                @errors << AuthorizationError.new(type_name: impl_type.graphql_name, path: @path.dup, base: true)
+                @errors << AuthorizationError.new(type_name: impl_type.graphql_name, path: exec_field.path, base: true)
                 impl_type_sources = Array.new(impl_type_sources.length, @errors.last)
               end
 
@@ -283,7 +282,7 @@ module GraphQL
         end
       end
 
-      def report_exception(message = nil, error: nil, path: @path.dup)
+      def report_exception(message = nil, error: nil, path: [])
         # todo: add real error reporting...
         puts "Error at #{path.join(".")}: #{message || error&.message}"
         puts error.backtrace.join("\n") if error
