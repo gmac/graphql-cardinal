@@ -6,9 +6,11 @@ module GraphQL::Cardinal
     module ErrorFormatting
       private
 
-      def format_inline_errors(data, _errors)
-        # todo: make this smarter to only traverse down actual error paths
+      def format_inline_errors(data, errors)
+        @target_paths = [["products", "nodes", "must"]] # errors.map(&:path).tap(&:compact!).tap(&:uniq!)
+        @selection_path = []
         @path = []
+
         propagate_object_scope_errors(
           data,
           @query.root_type_for_operation(@query.selected_operation.operation_type),
@@ -22,15 +24,23 @@ module GraphQL::Cardinal
         selections.each do |node|
           case node
           when GraphQL::Language::Nodes::Field
-            field_name = node.alias || node.name
-            @path << field_name
+            field_key = node.alias || node.name
+
+            return raw_object unless @target_paths.any? do |target_path|
+              target_path[@selection_path.length] == field_key && @selection_path.each_with_index.all? do |part, i|
+                part == target_path[i]
+              end
+            end
+
+            @selection_path << field_key
+            @path << field_key
 
             begin
               node_type = @query.get_field(parent_type, node.name).type
               named_type = node_type.unwrap
-              raw_value = raw_object[field_name]
+              raw_value = raw_object[field_key]
 
-              raw_object[field_name] = if raw_value.is_a?(ExecutionError)
+              raw_object[field_key] = if raw_value.is_a?(ExecutionError)
                 raw_value.replace_path(@path.dup) unless raw_value.base_error?
                 nil
               elsif node_type.list?
@@ -42,8 +52,9 @@ module GraphQL::Cardinal
                 propagate_object_scope_errors(raw_value, named_type, node.selections)
               end
 
-              return nil if node_type.non_null? && raw_object[field_name].nil?
+              return nil if node_type.non_null? && raw_object[field_key].nil?
             ensure
+              @selection_path.pop
               @path.pop
             end
 

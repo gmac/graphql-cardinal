@@ -81,11 +81,11 @@ module GraphQL
           lazy_field_keys = []
           exec_scope.fields = execution_fields_by_key(exec_scope.parent_type, exec_scope.selections)
           exec_scope.fields.each_value do |exec_field|
-            @path.push(exec_field.key)
             parent_type = exec_scope.parent_type
             parent_sources = exec_scope.sources
             field_name = exec_field.name
 
+            exec_field.scope = exec_scope
             exec_field.type = @query.get_field(parent_type, field_name).type
             value_type = exec_field.type.unwrap
 
@@ -122,11 +122,9 @@ module GraphQL
               exec_field.promise = resolved_sources
               lazy_field_keys << exec_field.key
             else
-              resolve_execution_field(exec_scope, exec_field, resolved_sources, lazy_field_keys)
+              resolve_execution_field(exec_field, resolved_sources, lazy_field_keys)
               lazy_field_keys.clear
             end
-
-            @path.pop
           end
         end
 
@@ -136,9 +134,7 @@ module GraphQL
             exec_scope.fields.each_value do |exec_field|
               next unless exec_field.promise
 
-              @path.push(exec_field.key)
-              resolve_execution_field(exec_scope, exec_field, exec_field.promise.value)
-              @path.pop
+              resolve_execution_field(exec_field, exec_field.promise.value)
             end
           else
             # requeue the scope to wait on others that haven't built fields yet
@@ -149,11 +145,10 @@ module GraphQL
         nil
       end
 
-      def resolve_execution_field(exec_scope, exec_field, resolved_sources, lazy_field_keys = nil)
-        parent_sources = exec_scope.sources
-        parent_responses = exec_scope.responses
+      def resolve_execution_field(exec_field, resolved_sources, lazy_field_keys = nil)
+        parent_sources = exec_field.scope.sources
+        parent_responses = exec_field.scope.responses
         field_key = exec_field.key
-        field_name = exec_field.name
         field_type = exec_field.type
         return_type = field_type.unwrap
 
@@ -170,7 +165,7 @@ module GraphQL
             # DANGER: HOT PATH!
             response = parent_responses[i]
             lazy_field_keys.each { |k| response[k] = nil } if lazy_field_keys && !lazy_field_keys.empty?
-            response[field_key] = build_composite_response(field_type, source, next_sources, next_responses)
+            response[field_key] = build_composite_response(exec_field, field_type, source, next_sources, next_responses)
           end
 
           if return_type.kind.abstract?
@@ -184,7 +179,7 @@ module GraphQL
             next_sources.each_with_index do |source, i|
               # DANGER: HOT PATH!
               impl_type = type_resolver.call(source, @context)
-              next_sources_by_type[impl_type] << (field_name == TYPENAME_FIELD ? impl_type.graphql_name : source)
+              next_sources_by_type[impl_type] << (exec_field.name == TYPENAME_FIELD ? impl_type.graphql_name : source)
               next_responses_by_type[impl_type] << next_responses[i].tap { |r| r.typename = impl_type.graphql_name }
             end
 
@@ -204,7 +199,8 @@ module GraphQL
                 responses: next_responses_by_type[impl_type],
                 loader_cache: loader_cache,
                 loader_group: loader_group,
-                parent: exec_scope,
+                path: exec_field.path,
+                parent: exec_field.scope,
               )
             end
 
@@ -215,7 +211,8 @@ module GraphQL
               selections: exec_field.selections,
               sources: next_sources,
               responses: next_responses,
-              parent: exec_scope,
+              path: exec_field.path,
+              parent: exec_field.scope,
             )
           end
         else
@@ -225,7 +222,7 @@ module GraphQL
             response = parent_responses[i]
             lazy_field_keys.each { |k| response[k] = nil } if lazy_field_keys && !lazy_field_keys.empty?
             response[field_key] = if val.nil? || val.is_a?(StandardError)
-              build_missing_value(field_type, val)
+              build_missing_value(exec_field, field_type, val)
             elsif return_type.kind.scalar?
               coerce_scalar_value(return_type, val)
             elsif return_type.kind.enum?

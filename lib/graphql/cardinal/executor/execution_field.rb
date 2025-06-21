@@ -4,18 +4,26 @@ module GraphQL::Cardinal
   class Executor
     class ExecutionField
       attr_reader :key, :node
-      attr_accessor :type, :promise
+      attr_accessor :scope, :type, :promise
 
-      def initialize(key)
+      def initialize(key, scope = nil)
         @key = key.freeze
+        @scope = scope
+        @name = nil
         @node = nil
         @nodes = nil
-        @arguments = nil
+        @type = nil
         @promise = nil
+        @arguments = nil
+        @path = nil
       end
 
       def name
         @name ||= @node.name.freeze
+      end
+
+      def path
+        @path ||= (@scope ? [*@scope.path, @key] : []).freeze
       end
 
       def add_node(n)
