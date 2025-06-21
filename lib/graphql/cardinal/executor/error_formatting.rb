@@ -7,7 +7,7 @@ module GraphQL::Cardinal
       private
 
       def format_inline_errors(data, errors)
-        @target_paths = [["products", "nodes", "must"]] # errors.map(&:path).tap(&:compact!).tap(&:uniq!)
+        @target_paths = errors.map(&:path).tap(&:compact!).tap(&:uniq!)
         @selection_path = []
         @path = []
 
