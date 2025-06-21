@@ -5,13 +5,12 @@ require_relative "./executor/execution_field"
 require_relative "./executor/authorization"
 require_relative "./executor/hot_paths"
 require_relative "./executor/response_hash"
-require_relative "./executor/error_formatting"
+require_relative "./executor/error_formatter"
 
 module GraphQL
   module Cardinal
     class Executor
       include HotPaths
-      include ErrorFormatting
 
       TYPENAME_FIELD = "__typename"
       TYPENAME_FIELD_RESOLVER = TypenameResolver.new
@@ -68,7 +67,8 @@ module GraphQL
           execute_scope(@exec_queue.shift) until @exec_queue.empty?
         end
 
-        response = { "data" => @errors.empty? ? @data : format_inline_errors(@data, @errors) }
+        data = @errors.empty? ? @data : ErrorFormatter.new(@query, @data, @errors).perform
+        response = { "data" => data }
         response["errors"] = @errors.map(&:to_h) unless @errors.empty?
         response
       end

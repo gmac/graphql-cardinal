@@ -3,20 +3,26 @@
 
 module GraphQL::Cardinal
   class Executor
-    module ErrorFormatting
-      private
-
-      def format_inline_errors(data, errors)
+    class ErrorFormatter
+      def initialize(query, data, errors)
+        @query = query
+        @data = data
         @target_paths = errors.map(&:path).tap(&:compact!).tap(&:uniq!)
         @selection_path = []
-        @path = []
+        @actual_path = []
+      end
+
+      def perform
+        return @data if @target_paths.empty?
 
         propagate_object_scope_errors(
-          data,
+          @data,
           @query.root_type_for_operation(@query.selected_operation.operation_type),
           @query.selected_operation.selections,
         )
       end
+
+      private
 
       def propagate_object_scope_errors(raw_object, parent_type, selections)
         return nil if raw_object.nil?
@@ -33,7 +39,7 @@ module GraphQL::Cardinal
             end
 
             @selection_path << field_key
-            @path << field_key
+            @actual_path << field_key
 
             begin
               node_type = @query.get_field(parent_type, node.name).type
@@ -41,7 +47,7 @@ module GraphQL::Cardinal
               raw_value = raw_object[field_key]
 
               raw_object[field_key] = if raw_value.is_a?(ExecutionError)
-                raw_value.replace_path(@path.dup) unless raw_value.base_error?
+                raw_value.replace_path(@actual_path.dup) unless raw_value.base_error?
                 nil
               elsif node_type.list?
                 node_type = node_type.of_type while node_type.non_null?
@@ -55,7 +61,7 @@ module GraphQL::Cardinal
               return nil if node_type.non_null? && raw_object[field_key].nil?
             ensure
               @selection_path.pop
-              @path.pop
+              @actual_path.pop
             end
 
           when GraphQL::Language::Nodes::InlineFragment
@@ -90,7 +96,7 @@ module GraphQL::Cardinal
         contains_null = false
 
         resolved_list = raw_list.map!.with_index do |raw_list_element, index|
-          @path << index
+          @actual_path << index
 
           begin
             result = if next_node_type.list?
@@ -108,7 +114,7 @@ module GraphQL::Cardinal
 
             result
           ensure
-            @path.pop
+            @actual_path.pop
           end
         end
 
